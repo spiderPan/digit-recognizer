@@ -83,7 +83,7 @@ class tf_basic_model:
                                                 hidden_units=hidden_units,
                                                 n_classes=10,
                                                 optimizer=my_optimizer,
-                                                dropout=0.1,
+                                                dropout=0.3,
                                                 config=tf.estimator.RunConfig(keep_checkpoint_max=1))
         print('Training Model...')
         print('LogLoss error (on validation data):')

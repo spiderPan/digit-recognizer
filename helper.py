@@ -61,7 +61,6 @@ class tf_basic_model:
         return _input_fn
 
     def train_nn_regression_model(
-            learning_rate,
             steps,
             batch_size,
             hidden_units,
@@ -71,19 +70,20 @@ class tf_basic_model:
             validation_targets,
             testing_examples,
             testing_targets):
-        periods = 10
+        periods = 20
         steps_per_period = steps / periods
 
         predict_training_input_fn = tf_basic_model.create_perdict_input_fn(training_examples, training_targets, batch_size)
         predict_validation_input_fn = tf_basic_model.create_perdict_input_fn(validation_examples, validation_targets, batch_size)
         training_input_fn = tf_basic_model.create_training_input_fn(training_examples, training_targets, batch_size)
 
-        my_optimizer = tf.train.ProximalAdagradOptimizer(learning_rate=learning_rate,l1_regularization_strength=0.001)
+        my_optimizer = tf.train.AdamOptimizer(1e-4)
         my_optimizer = tf.contrib.estimator.clip_gradients_by_norm(my_optimizer, 5.0)
         classifier = tf.estimator.DNNClassifier(feature_columns=tf_basic_model.construct_feature_columns(),
                                                 hidden_units=hidden_units,
                                                 n_classes=10,
                                                 optimizer=my_optimizer,
+                                                dropout=0.1,
                                                 config=tf.estimator.RunConfig(keep_checkpoint_max=1))
         print('Training Model...')
         print('LogLoss error (on validation data):')

@@ -19,10 +19,9 @@ testing_targets, testing_examples = tf_basic_model.parse_labels_and_features(tes
 
 
 classifier = tf_basic_model.train_nn_regression_model(
-    learning_rate=0.1,
-    steps=20000,
-    batch_size=100,
-    hidden_units=[1024, 512, 256],
+    steps=100000,
+    batch_size=50,
+    hidden_units=[256, 32],
     training_examples=training_examples,
     training_targets=training_targets,
     validation_examples=validation_examples,

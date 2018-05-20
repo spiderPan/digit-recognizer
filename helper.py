@@ -1,154 +1,109 @@
-import glob
-import io
-import math
-import os
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
-import pandas as pd
-import seaborn as sns
 import tensorflow as tf
-from IPython import display
-from matplotlib import cm, gridspec
-from matplotlib import pyplot as plt
-from sklearn import metrics
-from tensorflow.python.data import Dataset
+import pandas as pd
 
-tf.logging.set_verbosity(tf.logging.ERROR)
-pd.options.display.max_rows = 10
-pd.options.display.float_format = '{:.1f}'.format
+tf.logging.set_verbosity(tf.logging.INFO)
 
 
 class tf_basic_model:
-    def parse_labels_and_features(dataset):
-        if len(dataset.columns) > 784:
-            labels = dataset[0]
-            features = dataset.loc[:, 1:784]
-        else:
-            labels = dataset[0]
-            features = dataset.loc[:, 0:784]
-        features = features / 255
-        return labels, features
+    def __init__(self):
+        mnist_classifier = tf.estimator.Estimator(model_fn=self.cnn_model_fn,
+                                                  model_dir="/tmp/mnist_convnet_model")
+        self.model = mnist_classifier
 
-    def construct_feature_columns():
-        return set([tf.feature_column.numeric_column('pixels', shape=784)])
+    def cnn_model_fn(self, features, labels, mode):
+        input_layer = tf.reshape(features['x'], [-1, 28, 28, 1])
 
-    def create_training_input_fn(features, labels, batch_size, num_epochs=None, shuffle=True):
-        def _input_fn(num_epochs=None, shuffle=True):
-            idx = np.random.permutation(features.index)
-            raw_features = {'pixels': features.reindex(idx)}
-            raw_targets = np.array(labels[idx])
+        conv1 = tf.layers.conv2d(
+            inputs=input_layer,
+            filters=32,
+            kernel_size=[5, 5],
+            padding="same",
+            activation=tf.nn.relu
+        )
 
-            ds = Dataset.from_tensor_slices((raw_features, raw_targets))
-            ds = ds.batch(batch_size).repeat(num_epochs)
+        pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
 
-            if shuffle:
-                ds = ds.shuffle(10000)
+        conv2 = tf.layers.conv2d(
+            inputs=pool1,
+            filters=64,
+            kernel_size=[5, 5],
+            padding="same",
+            activation=tf.nn.relu
+        )
+        pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
 
-            feature_batch, label_batch = ds.make_one_shot_iterator().get_next()
-            return feature_batch, label_batch
-        return _input_fn
+        pool2_flat = tf.reshape(pool2, [-1, 7 * 7 * 64])
+        dense = tf.layers.dense(inputs=pool2_flat, units=1024, activation=tf.nn.relu)
+        dropout = tf.layers.dropout(inputs=dense, rate=0.4, training=mode == tf.estimator.ModeKeys.TRAIN)
+        logits = tf.layers.dense(inputs=dropout, units=10)
 
-    def create_perdict_input_fn(features, labels, batch_size):
-        def _input_fn():
-            raw_features = {'pixels': features.values}
-            raw_targets = np.array(labels)
+        predictions = {
+            'classes': tf.argmax(input=logits, axis=1),
+            'probabilities': tf.nn.softmax(logits, name="softmax_tensor")
+        }
 
-            ds = Dataset.from_tensor_slices((raw_features, raw_targets))
-            ds = ds.batch(batch_size)
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
-            feature_batch, label_batch = ds.make_one_shot_iterator().get_next()
-            return feature_batch, label_batch
-        return _input_fn
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
 
-    def train_nn_regression_model(
-            steps,
-            batch_size,
-            hidden_units,
-            training_examples,
-            training_targets,
-            validation_examples,
-            validation_targets,
-            testing_examples,
-            testing_targets):
-        periods = 20
-        steps_per_period = steps / periods
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
+        train_op = optimizer.minimize(loss=loss, global_step=tf.train.get_global_step())
+        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
-        predict_training_input_fn = tf_basic_model.create_perdict_input_fn(training_examples, training_targets, batch_size)
-        predict_validation_input_fn = tf_basic_model.create_perdict_input_fn(validation_examples, validation_targets, batch_size)
-        training_input_fn = tf_basic_model.create_training_input_fn(training_examples, training_targets, batch_size)
+        eval_metric_ops = {
+            'accuracy': tf.metrics.accuracy(labels=labels, predictions=predictions['classes'])
+        }
 
-        my_optimizer = tf.train.AdamOptimizer(1e-4)
-        my_optimizer = tf.contrib.estimator.clip_gradients_by_norm(my_optimizer, 5.0)
-        classifier = tf.estimator.DNNClassifier(feature_columns=tf_basic_model.construct_feature_columns(),
-                                                hidden_units=hidden_units,
-                                                n_classes=10,
-                                                optimizer=my_optimizer,
-                                                dropout=0.3,
-                                                config=tf.estimator.RunConfig(keep_checkpoint_max=1))
-        print('Training Model...')
-        print('LogLoss error (on validation data):')
-        training_errors = []
-        validation_errors = []
-        for period in range(0, periods):
-            classifier.train(input_fn=training_input_fn, steps=steps_per_period)
-            training_predictions = list(classifier.predict(input_fn=predict_training_input_fn))
-            training_probabilities = np.array([item['probabilities'] for item in training_predictions])
-            training_pred_class_id = np.array([item['class_ids'][0] for item in training_predictions])
-            training_pred_one_hot = tf.keras.utils.to_categorical(training_pred_class_id, 10)
+        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
-            validation_predictions = list(classifier.predict(input_fn=predict_validation_input_fn))
-            validation_probabilities = np.array([item['probabilities'] for item in validation_predictions])
-            validation_pred_class_id = np.array([item['class_ids'][0] for item in validation_predictions])
-            validation_pred_one_hot = tf.keras.utils.to_categorical(validation_pred_class_id, 10)
+    def train(self, train_input_data, train_labels):
+        tensors_to_log = {'probabilities': 'softmax_tensor'}
+        logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=50)
+        train_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={"x": np.asarray(train_input_data, dtype=np.float32)},
+            y=train_labels,
+            batch_size=100,
+            num_epochs=None,
+            shuffle=True
+        )
 
-            training_log_loss = metrics.log_loss(training_targets, training_pred_one_hot)
-            validation_log_loss = metrics.log_loss(validation_targets, validation_pred_one_hot)
+        self.model.train(
+            input_fn=train_input_fn,
+            steps=20000,
+            hooks=[logging_hook]
+        )
 
-            print(" period %02d : %0.2f" % (period, validation_log_loss))
+    def evaluate(self, eval_input_data, eval_labels):
+        eval_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={'x': np.asarray(eval_input_data, dtype=np.float32)},
+            y=eval_labels,
+            num_epochs=1,
+            shuffle=False
+        )
+        eval_results = self.model.evaluate(input_fn=eval_input_fn)
+        print(eval_results)
 
-            training_errors.append(training_log_loss)
-            validation_errors.append(validation_log_loss)
-        print("Model trianing finished")
-        _ = map(os.remove, glob.glob(os.path.join(classifier.model_dir, 'events.out.tfevents')))
+    def predict(self, predict_input_data):
+        test_input_fn = tf.estimator.inputs.numpy_input_fn(
+            x={'x': np.asarray(predict_input_data, dtype=np.float32)},
+            num_epochs=1,
+            shuffle=False
+        )
+        predict_results = self.model.predict(input_fn=test_input_fn)
+        return predict_results
 
-        final_predictions = classifier.predict(input_fn=predict_validation_input_fn)
-        final_predictions = np.array([item['class_ids'][0] for item in final_predictions])
-        accuracy = metrics.accuracy_score(validation_targets, final_predictions)
-        print("Final accuracy (on validation data): %0.2f" % accuracy)
-
-        plt.ylabel('Logloss')
-        plt.xlabel('Periods')
-        plt.title("LogLoss vs. Periods")
-        plt.plot(training_errors, label='Training')
-        plt.plot(validation_errors, label='Validation')
-        plt.legend()
-        plt.show()
-
-        cm = metrics.confusion_matrix(validation_targets, final_predictions)
-        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-
-        ax = sns.heatmap(cm_normalized, cmap="bone_r")
-        ax.set_aspect(1)
-        plt.title('Confusion matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.show()
-
-        predict_testing_input_fn = tf_basic_model.create_perdict_input_fn(testing_examples, testing_targets, batch_size)
-        tf_basic_model.submit_prediction(classifier, predict_testing_input_fn)
-
-        return classifier
-
-    def submit_prediction(model, predict_testing_input_fn, filename=None):
+    def submit_prediction(self, predictions, filename=None):
         if filename is None:
             filename = 'submission'
-
+        predictions = np.array([item['classes'] for item in predictions])
         submission = pd.DataFrame()
-        predictions = list(model.predict(input_fn=predict_testing_input_fn))
-        predictions = np.array([item['class_ids'][0] for item in predictions])
         submission['Label'] = predictions
         submission['ImageId'] = submission.index + 1
         submission = submission.reindex(columns=['ImageId', 'Label'])
-        display.display(submission)
         submission.head()
         submission.to_csv('./data/' + filename + '.csv', index=False)

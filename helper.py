@@ -10,7 +10,7 @@ tf.logging.set_verbosity(tf.logging.INFO)
 class tf_basic_model:
     def __init__(self):
         mnist_classifier = tf.estimator.Estimator(model_fn=self.cnn_model_fn,
-                                                  model_dir="/tmp/mnist_convnet_model")
+                                                  model_dir="/tmp/mnist_convnet_model_v2")
         self.model = mnist_classifier
 
     def cnn_model_fn(self, features, labels, mode):
@@ -24,20 +24,37 @@ class tf_basic_model:
             activation=tf.nn.relu
         )
 
-        pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
-
         conv2 = tf.layers.conv2d(
-            inputs=pool1,
-            filters=64,
+            inputs=conv1,
+            filters=32,
             kernel_size=[5, 5],
             padding="same",
             activation=tf.nn.relu
         )
-        pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
 
-        pool2_flat = tf.reshape(pool2, [-1, 7 * 7 * 64])
+        pool1 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
+        drop1 = tf.layers.dropout(inputs=pool1, rate=0.25)
+
+        conv3 = tf.layers.conv2d(
+            inputs=drop1,
+            filters=64,
+            kernel_size=[3, 3],
+            padding="same",
+            activation=tf.nn.relu
+        )
+        conv4 = tf.layers.conv2d(
+            inputs=conv3,
+            filters=64,
+            kernel_size=[3, 3],
+            padding="same",
+            activation=tf.nn.relu
+        )
+        pool2 = tf.layers.max_pooling2d(inputs=conv4, pool_size=[2, 2], strides=2)
+        drop2 = tf.layers.dropout(inputs=pool2, rate=0.25)
+
+        pool2_flat = tf.reshape(drop2, [-1, 7 * 7 * 64])
         dense = tf.layers.dense(inputs=pool2_flat, units=1024, activation=tf.nn.relu)
-        dropout = tf.layers.dropout(inputs=dense, rate=0.4, training=mode == tf.estimator.ModeKeys.TRAIN)
+        dropout = tf.layers.dropout(inputs=dense, rate=0.5, training=mode == tf.estimator.ModeKeys.TRAIN)
         logits = tf.layers.dense(inputs=dropout, units=10)
 
         predictions = {
@@ -52,8 +69,8 @@ class tf_basic_model:
 
         if mode == tf.estimator.ModeKeys.TRAIN:
             optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
-        train_op = optimizer.minimize(loss=loss, global_step=tf.train.get_global_step())
-        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+            train_op = optimizer.minimize(loss=loss, global_step=tf.train.get_global_step())
+            return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
         eval_metric_ops = {
             'accuracy': tf.metrics.accuracy(labels=labels, predictions=predictions['classes'])

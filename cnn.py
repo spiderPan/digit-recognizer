@@ -2,6 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import tensorflow as tf
+import pandas as pd
+import sys
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -54,12 +56,19 @@ def cnn_model_fn(features, labels, mode):
 
     return tf.estimator.EstimatorSpec(mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
+
 def main(unused_argv):
-    mnist = tf.estimator.datasets.load_dataset('mnist')
-    train_data = mnist.train.images
-    train_labels = np.asarray(mnist.train.labels, dtype=np.int32)
-    eval_data = mnist.test.images
-    eval_labels = np.asarray(mnist.test.labels, dtype=np.int32)
+    train_dataframe = pd.read_csv('data/train.csv', sep=",", header=None, skiprows=[0])
+    # test_dataframe = pd.read_csv('data/test.csv', sep=',', header=None, skiprows=[0])
+    train_data = train_dataframe[:35000]
+    eval_data = train_dataframe[35000:42000]
+
+    train_label = train_data[0]
+    eval_label = eval_data[0]
+    train_input_data = train_data.drop(columns=[0])
+    eval_input_data = eval_data.drop(columns=[0])
+    train_labels = np.asarray(train_label, dtype=np.int32)
+    eval_labels = np.asarray(eval_label, dtype=np.int32)
 
     mnist_classifier = tf.estimator.Estimator(model_fn=cnn_model_fn, model_dir="/tmp/mnist_convnet_model")
 
@@ -67,7 +76,7 @@ def main(unused_argv):
     logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=50)
 
     train_input_fn = tf.estimator.inputs.numpy_input_fn(
-        x={"x": train_data},
+        x={"x": np.asarray(train_input_data, dtype=np.float32)},
         y=train_labels,
         batch_size=100,
         num_epochs=None,
@@ -81,7 +90,7 @@ def main(unused_argv):
     )
 
     eval_input_fn = tf.estimator.inputs.numpy_input_fn(
-        x={'x': eval_data},
+        x={'x': np.asarray(eval_input_data, dtype=np.float32)},
         y=eval_labels,
         num_epochs=1,
         shuffle=False

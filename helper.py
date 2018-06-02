@@ -1,123 +1,73 @@
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
-import tensorflow as tf
-import pandas as pd
 
-tf.logging.set_verbosity(tf.logging.INFO)
+import pandas as pd
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.model_selection import train_test_split
+from keras.models import Sequential
+from keras.models import load_model
+from keras.layers.convolutional import Conv2D, MaxPooling2D
+from keras.layers.core import Flatten, Dense
+import pickle
 
 
 class tf_basic_model:
     def __init__(self):
-        mnist_classifier = tf.estimator.Estimator(model_fn=self.cnn_model_fn,
-                                                  model_dir="/tmp/mnist_convnet_model_v2")
-        self.model = mnist_classifier
+        self.model_filename = "./model/captcha_model.hdf5"
+        self.model_lables_filename = "./model/model_labels.dat"
 
-    def cnn_model_fn(self, features, labels, mode):
-        input_layer = tf.reshape(features['x'], [-1, 28, 28, 1])
+    def get_label_and_data(self, train_data):
+        train_label = train_data[:, 0]
+        train_data = np.delete(train_data, [0], axis=1)
+        return train_label, train_data
 
-        conv1 = tf.layers.conv2d(
-            inputs=input_layer,
-            filters=32,
-            kernel_size=[5, 5],
-            padding="same",
-            activation=tf.nn.relu
-        )
+    def pre_process_data(self, data):
+        data = np.reshape(data, (data.shape[0], 28, 28))
+        new_dim_data = np.expand_dims(data, axis=3)
+        return np.array(new_dim_data, dtype='float') / 255.0
 
-        conv2 = tf.layers.conv2d(
-            inputs=conv1,
-            filters=32,
-            kernel_size=[5, 5],
-            padding="same",
-            activation=tf.nn.relu
-        )
+    def train_model(self, data, labels):
+        (X_train, X_test, Y_train, Y_test) = train_test_split(data, labels, test_size=0.25, random_state=0)
+        lb = LabelBinarizer().fit(Y_train)
+        Y_train = lb.transform(Y_train)
+        Y_test = lb.transform(Y_test)
+        with open(self.model_lables_filename, "wb") as f:
+            pickle.dump(lb, f)
 
-        pool1 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
-        drop1 = tf.layers.dropout(inputs=pool1, rate=0.25)
+        model = Sequential()
 
-        conv3 = tf.layers.conv2d(
-            inputs=drop1,
-            filters=64,
-            kernel_size=[3, 3],
-            padding="same",
-            activation=tf.nn.relu
-        )
-        conv4 = tf.layers.conv2d(
-            inputs=conv3,
-            filters=64,
-            kernel_size=[3, 3],
-            padding="same",
-            activation=tf.nn.relu
-        )
-        pool2 = tf.layers.max_pooling2d(inputs=conv4, pool_size=[2, 2], strides=2)
-        drop2 = tf.layers.dropout(inputs=pool2, rate=0.25)
+        model.add(Conv2D(20, (5, 5), padding="same", input_shape=(28, 28, 1), activation="relu"))
+        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
 
-        pool2_flat = tf.reshape(drop2, [-1, 7 * 7 * 64])
-        dense = tf.layers.dense(inputs=pool2_flat, units=1024, activation=tf.nn.relu)
-        dropout = tf.layers.dropout(inputs=dense, rate=0.5, training=mode == tf.estimator.ModeKeys.TRAIN)
-        logits = tf.layers.dense(inputs=dropout, units=10)
+        model.add(Conv2D(50, (5, 5), padding="same", activation="relu"))
+        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
 
-        predictions = {
-            'classes': tf.argmax(input=logits, axis=1),
-            'probabilities': tf.nn.softmax(logits, name="softmax_tensor")
-        }
+        model.add(Flatten())
+        model.add(Dense(500, activation="relu"))
 
-        if mode == tf.estimator.ModeKeys.PREDICT:
-            return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
+        model.add(Dense(10, activation="softmax"))
 
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
 
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
-            train_op = optimizer.minimize(loss=loss, global_step=tf.train.get_global_step())
-            return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+        model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=32, epochs=10, verbose=1)
 
-        eval_metric_ops = {
-            'accuracy': tf.metrics.accuracy(labels=labels, predictions=predictions['classes'])
-        }
+        model.save(self.model_filename)
 
-        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
+    def predict_model(self, test_data):
+        with open(self.model_lables_filename, "rb") as f:
+            lb = pickle.load(f)
 
-    def train(self, train_input_data, train_labels):
-        tensors_to_log = {'probabilities': 'softmax_tensor'}
-        logging_hook = tf.train.LoggingTensorHook(tensors=tensors_to_log, every_n_iter=50)
-        train_input_fn = tf.estimator.inputs.numpy_input_fn(
-            x={"x": np.asarray(train_input_data, dtype=np.float32)},
-            y=train_labels,
-            batch_size=100,
-            num_epochs=None,
-            shuffle=True
-        )
+        model = load_model(self.model_filename)
+        prediction = model.predict(test_data)
+        prediction_results = lb.inverse_transform(prediction)
 
-        self.model.train(
-            input_fn=train_input_fn,
-            steps=20000,
-            hooks=[logging_hook]
-        )
-
-    def evaluate(self, eval_input_data, eval_labels):
-        eval_input_fn = tf.estimator.inputs.numpy_input_fn(
-            x={'x': np.asarray(eval_input_data, dtype=np.float32)},
-            y=eval_labels,
-            num_epochs=1,
-            shuffle=False
-        )
-        eval_results = self.model.evaluate(input_fn=eval_input_fn)
-        print(eval_results)
-
-    def predict(self, predict_input_data):
-        test_input_fn = tf.estimator.inputs.numpy_input_fn(
-            x={'x': np.asarray(predict_input_data, dtype=np.float32)},
-            num_epochs=1,
-            shuffle=False
-        )
-        predict_results = self.model.predict(input_fn=test_input_fn)
-        return predict_results
+        return prediction_results.astype(int)
 
     def submit_prediction(self, predictions, filename=None):
         if filename is None:
             filename = 'submission'
-        predictions = np.array([item['classes'] for item in predictions])
+
         submission = pd.DataFrame()
         submission['Label'] = predictions
         submission['ImageId'] = submission.index + 1

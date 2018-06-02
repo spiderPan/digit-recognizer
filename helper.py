@@ -10,12 +10,13 @@ from keras.models import load_model
 from keras.layers.convolutional import Conv2D, MaxPooling2D
 from keras.layers.core import Flatten, Dense
 import pickle
-
+from pathlib import Path
 
 class tf_basic_model:
     def __init__(self):
-        self.model_filename = "./model/captcha_model.hdf5"
-        self.model_lables_filename = "./model/model_labels.dat"
+        self.model_folder = Path("./model")
+        self.model_filename = self.model_folder / "captcha_model.hdf5"
+        self.model_lables_filename = self.model_folder / "model_labels.dat"
 
     def get_label_and_data(self, train_data):
         train_label = train_data[:, 0]
@@ -28,7 +29,7 @@ class tf_basic_model:
         return np.array(new_dim_data, dtype='float') / 255.0
 
     def train_model(self, data, labels):
-        (X_train, X_test, Y_train, Y_test) = train_test_split(data, labels, test_size=0.25, random_state=0)
+        (X_train, X_test, Y_train, Y_test) = train_test_split(data, labels, test_size=0.15, random_state=0)
         lb = LabelBinarizer().fit(Y_train)
         Y_train = lb.transform(Y_train)
         Y_test = lb.transform(Y_test)
@@ -50,7 +51,7 @@ class tf_basic_model:
 
         model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
 
-        model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=32, epochs=10, verbose=1)
+        model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=50, epochs=50, verbose=1)
 
         model.save(self.model_filename)
 
